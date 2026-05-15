@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenAI Realtime STT Test</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <h1>Realtime STT</h1>
+          <p>OpenAI `gpt-realtime-whisper` 실시간 전사 테스트</p>
+        </div>
+        <div class="status" id="status">대기</div>
+      </section>
+
+      <section class="controls" aria-label="Realtime STT controls">
+        <label>
+          입력
+          <select id="source">
+            <option value="file" selected>파일</option>
+            <option value="mic">마이크</option>
+          </select>
+        </label>
+        <label class="file-control" id="fileControl">
+          오디오 파일
+          <input id="audioFile" type="file" accept="audio/*,video/*" />
+        </label>
+        <label>
+          모델
+          <select id="model">
+            <option value="gpt-realtime-whisper">gpt-realtime-whisper</option>
+            <option value="gpt-4o-transcribe" selected>gpt-4o-transcribe</option>
+            <option value="gpt-4o-mini-transcribe">gpt-4o-mini-transcribe</option>
+            <option value="whisper-1">whisper-1</option>
+          </select>
+        </label>
+        <label class="file-mode-control" id="fileModeControl">
+          파일 전사 방식
+          <select id="transcriptionMode">
+            <option value="stereo_dialogue" selected>스테레오 화자분리</option>
+            <option value="file_api">파일 전사 API (화자 없음)</option>
+            <option value="realtime">Realtime 스트리밍(실험용)</option>
+          </select>
+        </label>
+        <label>
+          언어
+          <input id="language" value="ko" maxlength="5" />
+        </label>
+        <label class="range-control">
+          VAD 민감도
+          <span class="range-row">
+            <input id="threshold" type="range" min="0" max="1" step="0.05" value="0.5" />
+            <span id="thresholdValue">0.50</span>
+          </span>
+        </label>
+        <label>
+          묵음 종료(ms)
+          <input id="silence" type="number" min="100" max="3000" step="100" value="500" />
+        </label>
+        <label class="keywords">
+          키워드 힌트
+          <input id="prompt" placeholder="Realtime 세션 안정성 확인 전에는 비워두는 것을 권장" />
+        </label>
+        <label>
+          노이즈 감소
+          <select id="noiseReduction">
+            <option value="off" selected>사용 안 함 (원음)</option>
+            <option value="near_field">Near field</option>
+            <option value="far_field">Far field</option>
+          </select>
+        </label>
+        <label>
+          보정 AI
+          <select id="correctionProvider">
+            <option value="claude" selected>Claude Sonnet 4.6</option>
+            <option value="gemini">Gemini</option>
+          </select>
+        </label>
+        <details class="sample-control" id="sampleControl" hidden>
+          <summary>서버 샘플</summary>
+          서버 샘플
+          <input id="samplePath" value="기창큐브/3월3일 녹취/kcc0202_20260417161549/kcc0202_01099465144_20260303134157.mp3" />
+          <button id="loadSample" type="button">샘플 불러오기</button>
+        </details>
+        <button id="start">시작</button>
+        <button id="compareNoise" type="button">노이즈 비교</button>
+        <button id="correctTranscript" type="button" disabled>보정 실행</button>
+        <button id="evaluateQuality" type="button" disabled>로컬 품질 평가</button>
+        <button id="saveResult" type="button" disabled>결과 저장</button>
+        <button id="stop" disabled>중지</button>
+      </section>
+
+      <details class="api-key-panel" id="apiKeyPanel">
+        <summary>API Key 설정</summary>
+        <div class="api-key-grid">
+          <label>
+            OpenAI
+            <input id="openaiKey" type="password" autocomplete="off" placeholder="sk-..." />
+          </label>
+          <label>
+            Claude
+            <input id="anthropicKey" type="password" autocomplete="off" placeholder="sk-ant-..." />
+          </label>
+          <label>
+            Gemini
+            <input id="geminiKey" type="password" autocomplete="off" />
+          </label>
+          <button id="saveApiKeys" type="button">키 저장</button>
+        </div>
+        <div class="api-key-status" id="apiKeyStatus">키 상태 확인 중</div>
+      </details>
+
+      <details class="quality-rule-panel" id="qualityRulePanel">
+        <summary>평가룰 설정</summary>
+        <div class="quality-rule-toolbar">
+          <span id="qualityRuleTotal">총 배점 100</span>
+          <button id="resetQualityRules" type="button">기본값</button>
+        </div>
+        <div id="qualityRuleSettings" class="quality-rule-settings"></div>
+      </details>
+
+      <section class="file-status" id="fileStatus" hidden>
+        <div>
+          <strong id="fileName">파일 없음</strong>
+          <span id="fileMeta"></span>
+          <span id="progressText"></span>
+        </div>
+        <progress id="fileProgress" value="0" max="100"></progress>
+      </section>
+
+      <section class="events collapsible-panel is-collapsed" id="eventsPanel">
+        <div class="panel-header">
+          <h2>이벤트</h2>
+          <button type="button" class="panel-toggle" data-target-panel="eventsPanel" aria-expanded="false">펼치기</button>
+        </div>
+        <pre id="events" class="panel-body"></pre>
+      </section>
+
+      <section class="events comparison-panel" id="comparisonPanel" hidden>
+        <div class="panel-header">
+          <h2>노이즈 감소 비교</h2>
+          <button type="button" class="panel-toggle" data-target-panel="comparisonPanel" aria-expanded="true">접기</button>
+        </div>
+        <pre id="comparison" class="panel-body"></pre>
+      </section>
+
+      <section class="transcript">
+        <div class="pane collapsible-panel is-collapsed" id="partialPanel">
+          <div class="panel-header">
+            <h2>진행 중</h2>
+            <button type="button" class="panel-toggle" data-target-panel="partialPanel" aria-expanded="false">펼치기</button>
+          </div>
+          <div id="partial" class="partial panel-body"></div>
+        </div>
+        <div class="pane collapsible-panel is-collapsed" id="finalsPanel">
+          <div class="panel-header">
+            <h2>대화 내용</h2>
+            <button type="button" class="panel-toggle" data-target-panel="finalsPanel" aria-expanded="false">펼치기</button>
+          </div>
+          <div id="finals" class="chat-transcript panel-body" aria-live="polite"></div>
+        </div>
+        <div class="pane collapsible-panel is-collapsed" id="correctionPanel">
+          <div class="panel-header">
+            <h2>AI 보정</h2>
+            <button type="button" class="panel-toggle" data-target-panel="correctionPanel" aria-expanded="false">펼치기</button>
+          </div>
+          <div id="correction" class="chat-transcript panel-body" aria-live="polite"></div>
+        </div>
+        <div class="pane collapsible-panel is-collapsed" id="qualityPanel">
+          <div class="panel-header">
+            <h2>상담 품질 평가</h2>
+            <button type="button" class="panel-toggle" data-target-panel="qualityPanel" aria-expanded="false">펼치기</button>
+          </div>
+          <div id="qualityEvaluation" class="evaluation panel-body"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
