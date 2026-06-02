@@ -213,10 +213,52 @@ third_party/whisper.cpp/models/download-ggml.sh small
   **실제 UDS bind/connect/오디오 송신/프레임 회신**, 하이브리드 라우팅(동의 전량 공급 + 세그먼트 전사).
 - `asr_pipeline` 은 libvosk + libwhisper 와 정상 링크(컴파일·링크 검증). 실행 e2e 는 모델 확보 후.
 
+## 송신측 메커니즘 (PCMU → UDS)
+
+메인 백엔드가 전화망 **8kHz G.711 μ-law(PCMU)** 스트림을 AI 추론 프로세스로 밀어넣는 부분.
+
+설계 결정:
+- **클라이언트가 디코드+리샘플 담당** → 서버는 항상 16kHz PCM16 단일 포맷만 처리(균일).
+  (원 설계 문서의 "Main Process: PCMU 디코딩 후 16kHz PCM 추출" 의도와 일치)
+- 와이어 포맷: 오디오 IN = **raw PCM16LE 연속 스트림**(프레이밍 없음), 결과 OUT = **길이 prefix 프레임**.
+- **스트리밍(상태 유지) 리샘플러**: FIR 딜레이라인을 청크 간 유지 → 20ms 패킷 연속 입력에도
+  경계 아티팩트 없음(블록 처리와 MAE≈0 확인).
+- **백프레셔**: 전화망 콜백은 절대 블로킹하지 않음(디코드 후 링버퍼에 push, 가득 차면 drop-oldest).
+- **SIGPIPE 안전**: 프레이밍 송신은 `send(MSG_NOSIGNAL)`; 스레드 종료는 `shutdown(SHUT_RDWR)`로
+  블로킹 read 를 깨움.
+- **연결 복원력**: 초기 연결은 지수 백오프 재시도. (스트림 중 재연결/폴백은 운영화 항목 참고)
+
+구성 요소:
+- `streaming_resampler` — 8k→16k 상태 유지 업샘플(x2, anti-alias FIR)
+- `uds_client` — 연결(백오프 재시도) + raw PCM16 송신 + 결과 프레임 수신
+- `pcmu_sender` — `feed_pcmu()`(비블로킹) + 송신/수신 스레드 + 백프레셔 링버퍼
+- `asr_feed` — 송신 데모 CLI: PCMU 파일을 실시간 페이스로 스트리밍
+
+스레드 모델:
+```
+전화망 콜백 ─feed_pcmu()→ [μ-law 디코드] → 링버퍼(8k, drop-oldest)
+                                              │
+                            [송신 스레드] 스트리밍 리샘플(8k→16k) → UDS write_fully
+                            [수신 스레드] UDS read_frame → on_result 콜백(consent/transcript/status)
+```
+
+실행:
+```bash
+# 서버(asr_pipeline)가 /tmp/asr.sock 에서 대기 중일 때
+./build/asr_feed --socket /tmp/asr.sock --input call.pcmu --realtime
+```
+
+검증(이 환경):
+- 스트리밍 리샘플러 연속성: 블록 처리 대비 **MAE=0.0**.
+- `asr_feed` end-to-end: 15200 PCMU 바이트 → 서버가 **30400개 16k 샘플**(정확히 2배) 수신,
+  결과 프레임 정상 수신, 링버퍼 드롭 0.
+- 단위 테스트 `pcmu_sender`: 리샘플 연속성 + 송신→서버 바이트 경로 + 결과 프레임 수신.
+
 ## 다음 단계
 
 - 한국어 모델(Vosk/whisper) 확보 후 **end-to-end + FP/FN·지연 측정**
 - 전처리(AGC/NS) on/off A·B 측정
-- 워치독/헬스체크, AI 다운 시 graceful degradation(상담원 수동 확인 폴백)
+- 스트림 중 **재연결**(generation 카운터로 송/수신 스레드 안전 교체) + AI 다운 시
+  graceful degradation(상담원 수동 확인 폴백) + 워치독/헬스체크
 
 > 참고: 본 디렉토리는 저장소의 Node.js(OpenAI Realtime) 앱과 독립적인 별도 스택의 PoC다.

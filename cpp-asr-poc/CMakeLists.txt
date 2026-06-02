@@ -21,6 +21,10 @@ add_library(asr_poc STATIC
   src/frame_io.cpp
   src/uds_server.cpp
   src/hybrid.cpp
+  src/fir.cpp
+  src/streaming_resampler.cpp
+  src/uds_client.cpp
+  src/pcmu_sender.cpp
 )
 target_include_directories(asr_poc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 find_package(Threads REQUIRED)
@@ -33,6 +37,10 @@ target_link_libraries(asr_segmenter PRIVATE asr_poc)
 # 합성 테스트 오디오 생성기
 add_executable(gen_test_audio tools/gen_test_audio.cpp)
 target_link_libraries(gen_test_audio PRIVATE asr_poc)
+
+# 송신측 데모 CLI (메인 백엔드 → UDS). 모델 불필요.
+add_executable(asr_feed src/main_feed.cpp)
+target_link_libraries(asr_feed PRIVATE asr_poc)
 
 # 자동 테스트
 enable_testing()
@@ -51,6 +59,10 @@ add_test(NAME ipc_framing_uds COMMAND test_ipc)
 add_executable(test_hybrid tests/test_hybrid.cpp)
 target_link_libraries(test_hybrid PRIVATE asr_poc)
 add_test(NAME hybrid_orchestration COMMAND test_hybrid)
+
+add_executable(test_sender tests/test_sender.cpp)
+target_link_libraries(test_sender PRIVATE asr_poc)
+add_test(NAME pcmu_sender COMMAND test_sender)
 
 # ---- PoC-B: Vosk 동의 감지 (libvosk 가 있을 때만 빌드) ----
 # 라이브러리 위치: third_party/vosk/{libvosk.so, vosk_api.h}

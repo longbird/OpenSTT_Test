@@ -1,6 +1,11 @@
 #include "frame_io.hpp"
 #include <cerrno>
+#include <sys/socket.h>
 #include <unistd.h>
+
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
 
 namespace asr {
 
@@ -23,7 +28,8 @@ ssize_t write_fully(int fd, const void* buf, size_t n) {
     const auto* p = static_cast<const uint8_t*>(buf);
     size_t sent = 0;
     while (sent < n) {
-        ssize_t w = ::write(fd, p + sent, n - sent);
+        // send + MSG_NOSIGNAL: peer 종료 시 SIGPIPE 대신 EPIPE 반환(프로세스 보호).
+        ssize_t w = ::send(fd, p + sent, n - sent, MSG_NOSIGNAL);
         if (w < 0) {
             if (errno == EINTR) continue;
             return (sent > 0) ? static_cast<ssize_t>(sent) : -1;
