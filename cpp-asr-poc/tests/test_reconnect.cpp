@@ -33,14 +33,19 @@ int main() {
     std::atomic<int> accepts{0};
 
     std::thread server_thread([&] {
-        std::vector<int16_t> b(1600);
-        // 연결 1: 일부 수신 후 ack, 그리고 강제 종료(크래시 모사)
+        MsgType t;
+        std::string p;
+        // 연결 1: AUDIO 1개 수신 후 ack, 그리고 강제 종료(크래시 모사)
         int c1 = srv.accept();
         if (c1 < 0) return;
         accepts++;
-        ssize_t r = ::read(c1, b.data(), b.size() * sizeof(int16_t));
-        if (r > 0) recv1 += r / (ssize_t)sizeof(int16_t);
-        write_frame(c1, "{\"type\":\"status\",\"state\":\"ack1\"}");
+        while (read_frame(c1, t, p)) {
+            if (t == MsgType::Audio) {
+                recv1 += p.size() / sizeof(int16_t);
+                write_frame(c1, MsgType::Result, "{\"kind\":\"status\",\"state\":\"ack1\"}");
+                break;
+            }
+        }
         ::shutdown(c1, SHUT_RDWR);
         ::close(c1); // 연결 끊김
 
@@ -48,11 +53,10 @@ int main() {
         int c2 = srv.accept();
         if (c2 < 0) return;
         accepts++;
-        write_frame(c2, "{\"type\":\"status\",\"state\":\"ack2\"}");
-        while (true) {
-            ssize_t rr = ::read(c2, b.data(), b.size() * sizeof(int16_t));
-            if (rr <= 0) break;
-            recv2 += rr / (ssize_t)sizeof(int16_t);
+        write_frame(c2, MsgType::Result, "{\"kind\":\"status\",\"state\":\"ack2\"}");
+        while (read_frame(c2, t, p)) {
+            if (t == MsgType::Audio) recv2 += p.size() / sizeof(int16_t);
+            else if (t == MsgType::Ping) write_frame(c2, MsgType::Pong, p);
         }
         ::close(c2);
     });

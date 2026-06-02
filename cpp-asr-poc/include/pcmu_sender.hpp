@@ -34,6 +34,9 @@ struct PcmuSenderConfig {
     int connect_backoff_ms = 200;        // 백오프 시작값
     int reconnect_backoff_cap_ms = 2000; // 재연결 백오프 상한
     int max_reconnects = -1;             // -1 = 무제한
+    int ping_interval_ms = 2000;         // PING 주기(0=비활성)
+    int rx_timeout_ms = 6000;            // 이 시간 내 수신 없으면 죽은 연결로 간주(0=비활성)
+    int sample_rate_out = 16000;         // HELLO 에 알릴 출력 레이트
 };
 
 class PcmuStreamSender {
@@ -87,6 +90,8 @@ private:
     std::thread recv_thread_;
     std::atomic<bool> running_{false};
     std::atomic<int> reconnects_{0};
+    std::atomic<long long> last_rx_ms_{0}; // 마지막 수신 시각(워치독)
+    bool need_hello_ = false;              // 새 연결 후 HELLO 전송 대기(송신 스레드 전용)
     std::string err_;
 };
 

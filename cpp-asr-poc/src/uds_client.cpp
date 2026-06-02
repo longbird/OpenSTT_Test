@@ -49,8 +49,7 @@ bool UdsClient::connect(const std::string& path, int retries, int backoff_base_m
 
 bool UdsClient::send_pcm16(const int16_t* samples, size_t n) {
     if (fd_ < 0) return false;
-    ssize_t want = static_cast<ssize_t>(n * sizeof(int16_t));
-    if (write_fully(fd_, samples, n * sizeof(int16_t)) != want) {
+    if (!write_frame(fd_, MsgType::Audio, samples, n * sizeof(int16_t))) {
         err_ = "send_pcm16: socket write failed (peer closed?)";
         close();
         return false;
@@ -58,9 +57,9 @@ bool UdsClient::send_pcm16(const int16_t* samples, size_t n) {
     return true;
 }
 
-bool UdsClient::recv_result(std::string& payload) {
+bool UdsClient::recv_frame(MsgType& type, std::string& payload) {
     if (fd_ < 0) return false;
-    return read_frame(fd_, payload);
+    return read_frame(fd_, type, payload);
 }
 
 void UdsClient::close() {

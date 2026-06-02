@@ -79,16 +79,19 @@ int main() {
         std::thread server_thread([&] {
             int cfd = srv.accept();
             if (cfd < 0) return;
-            std::vector<int16_t> b(3200);
+            MsgType type;
+            std::string payload;
             bool sent_ack = false;
-            while (true) {
-                ssize_t r = ::read(cfd, b.data(), b.size() * sizeof(int16_t));
-                if (r <= 0) break;
-                recv_samples += r / (ssize_t)sizeof(int16_t);
-                // 실서버처럼 스트리밍 중 결과 프레임을 회신(첫 데이터 수신 시 1회).
-                if (!sent_ack) {
-                    write_frame(cfd, "{\"type\":\"status\",\"state\":\"ack\"}");
-                    sent_ack = true;
+            while (read_frame(cfd, type, payload)) {
+                if (type == MsgType::Audio) {
+                    recv_samples += payload.size() / sizeof(int16_t);
+                    // 실서버처럼 스트리밍 중 결과 프레임 회신(첫 오디오 수신 시 1회)
+                    if (!sent_ack) {
+                        write_frame(cfd, MsgType::Result, "{\"kind\":\"status\",\"state\":\"ack\"}");
+                        sent_ack = true;
+                    }
+                } else if (type == MsgType::Ping) {
+                    write_frame(cfd, MsgType::Pong, payload);
                 }
             }
             ::close(cfd);

@@ -5,11 +5,19 @@
 
 #include <algorithm>
 #include <chrono>
+#include <string>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <vector>
 
 namespace asr {
+
+namespace {
+long long now_ms() {
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+} // namespace
 
 PcmuStreamSender::PcmuStreamSender(const PcmuSenderConfig& cfg, ResultFn on_result,
                                    StatusFn on_status)
@@ -42,6 +50,8 @@ bool PcmuStreamSender::start() {
         conn_alive_ = true;
         gen_ = 1;
     }
+    need_hello_ = true;
+    last_rx_ms_ = now_ms();
     notify_status("connected");
     running_ = true;
     send_thread_ = std::thread(&PcmuStreamSender::send_loop, this);
@@ -70,7 +80,6 @@ void PcmuStreamSender::mark_dead(uint64_t gen) {
     }
 }
 
-// 송신 스레드 전용: 살아있으면 즉시 true, 아니면 백오프 재연결.
 bool PcmuStreamSender::ensure_connected() {
     {
         std::lock_guard<std::mutex> lk(cmu_);
@@ -91,6 +100,8 @@ bool PcmuStreamSender::ensure_connected() {
                 ccv_.notify_all();
             }
             resampler_ = StreamingResampler8kTo16k(); // 새 스트림: 리샘플 상태 리셋
+            need_hello_ = true;
+            last_rx_ms_ = now_ms();
             reconnects_++;
             notify_status("connected");
             return true;
@@ -109,8 +120,36 @@ bool PcmuStreamSender::ensure_connected() {
 
 void PcmuStreamSender::send_loop() {
     std::vector<int16_t> chunk(cfg_.send_chunk_8k);
+    long long last_ping = now_ms();
     while (running_.load()) {
         if (!ensure_connected()) break;
+
+        uint64_t gen;
+        int fd = snapshot_fd(gen);
+        if (fd < 0) continue;
+
+        // 새 연결이면 HELLO 핸드셰이크 먼저 전송
+        if (need_hello_) {
+            std::string hello = "{\"v\":1,\"codec\":\"pcm16\",\"rate\":" +
+                                std::to_string(cfg_.sample_rate_out) + ",\"ch\":1}";
+            if (!write_frame(fd, MsgType::Hello, hello)) { mark_dead(gen); continue; }
+            need_hello_ = false;
+            last_ping = now_ms();
+        }
+
+        long long now = now_ms();
+        // 워치독: RX 타임아웃 → 죽은 연결로 간주하고 재연결
+        if (cfg_.rx_timeout_ms > 0 && now - last_rx_ms_.load() > cfg_.rx_timeout_ms) {
+            notify_status("timeout");
+            mark_dead(gen);
+            continue;
+        }
+        // 주기적 PING
+        if (cfg_.ping_interval_ms > 0 && now - last_ping >= cfg_.ping_interval_ms) {
+            std::string p = "{\"ts\":" + std::to_string(now) + "}";
+            if (!write_frame(fd, MsgType::Ping, p)) { mark_dead(gen); continue; }
+            last_ping = now;
+        }
 
         size_t got = ring_.pop(chunk.data(), chunk.size());
         if (got == 0) {
@@ -118,22 +157,18 @@ void PcmuStreamSender::send_loop() {
             continue;
         }
         std::vector<int16_t> pcm16k = resampler_.process(chunk.data(), got);
-
-        uint64_t gen;
-        int fd = snapshot_fd(gen);
-        if (fd < 0) continue; // 방금 끊김 → 다음 루프에서 재연결
-        ssize_t want = static_cast<ssize_t>(pcm16k.size() * sizeof(int16_t));
-        if (write_fully(fd, pcm16k.data(), pcm16k.size() * sizeof(int16_t)) != want) {
+        if (!write_frame(fd, MsgType::Audio, pcm16k.data(),
+                         pcm16k.size() * sizeof(int16_t))) {
             notify_status("disconnected");
-            mark_dead(gen); // 재연결 유도
+            mark_dead(gen);
         }
     }
 }
 
 void PcmuStreamSender::recv_loop() {
     std::string payload;
+    MsgType type;
     while (running_.load()) {
-        // 살아있는 연결을 기다렸다가 fd+세대 스냅샷
         int fd;
         uint64_t gen;
         {
@@ -143,13 +178,14 @@ void PcmuStreamSender::recv_loop() {
             fd = fd_;
             gen = gen_;
         }
-        // 이 세대 연결이 살아있는 동안 결과 프레임 수신
         while (running_.load()) {
-            if (!read_frame(fd, payload)) {
-                mark_dead(gen); // 연결 종료 → 바깥 wait 로 돌아가 새 세대 대기
+            if (!read_frame(fd, type, payload)) {
+                mark_dead(gen);
                 break;
             }
-            if (on_result_) on_result_(payload);
+            last_rx_ms_ = now_ms(); // 모든 수신은 연결 생존 신호
+            if (type == MsgType::Result && on_result_) on_result_(payload);
+            // Pong 등 기타 타입은 생존 갱신만(이미 위에서 처리)
         }
     }
 }

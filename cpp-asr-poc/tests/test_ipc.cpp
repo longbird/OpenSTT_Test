@@ -65,13 +65,18 @@ int main() {
         check(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0, "socketpair created");
         std::string big(100000, 'x');
         for (size_t i = 0; i < big.size(); ++i) big[i] = static_cast<char>('A' + (i % 26));
-        std::thread writer([&] { write_frame(sv[1], "hello"); write_frame(sv[1], big); });
+        std::thread writer([&] {
+            write_frame(sv[1], MsgType::Hello, "hello");
+            write_frame(sv[1], MsgType::Audio, big);
+        });
+        MsgType t1, t2;
         std::string p1, p2;
-        bool r1 = read_frame(sv[0], p1);
-        bool r2 = read_frame(sv[0], p2);
+        bool r1 = read_frame(sv[0], t1, p1);
+        bool r2 = read_frame(sv[0], t2, p2);
         writer.join();
-        check(r1 && p1 == "hello", "small frame roundtrip");
-        check(r2 && p2 == big && p2.size() == 100000, "large frame reassembled across reads");
+        check(r1 && t1 == MsgType::Hello && p1 == "hello", "small typed frame roundtrip");
+        check(r2 && t2 == MsgType::Audio && p2 == big && p2.size() == 100000,
+              "large frame reassembled across reads with type");
         close(sv[0]); close(sv[1]);
     }
 
@@ -90,7 +95,7 @@ int main() {
             ssize_t got = read_fully(cfd, audio.data(), kSamples * sizeof(int16_t));
             std::string msg = "{\"recv_samples\":" +
                               std::to_string(got / (ssize_t)sizeof(int16_t)) + "}";
-            write_frame(cfd, msg);
+            write_frame(cfd, MsgType::Result, msg);
             close(cfd);
         });
 
@@ -104,9 +109,10 @@ int main() {
 
         std::vector<int16_t> audio(kSamples, 7);
         write_fully(cli, audio.data(), kSamples * sizeof(int16_t));
+        MsgType rtype;
         std::string reply;
-        bool got_reply = read_frame(cli, reply);
-        check(got_reply && reply == "{\"recv_samples\":320}",
+        bool got_reply = read_frame(cli, rtype, reply);
+        check(got_reply && rtype == MsgType::Result && reply == "{\"recv_samples\":320}",
               "server received audio and framed reply back");
         close(cli);
         server_thread.join();

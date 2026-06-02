@@ -3,6 +3,7 @@
 // 연결 재시도(지수 백오프) + 끊김 시 재연결. 오디오는 raw PCM16 스트림으로 송신,
 // 결과는 길이 prefix 프레임으로 수신.
 #pragma once
+#include "frame_io.hpp"
 #include <string>
 
 namespace asr {
@@ -25,11 +26,11 @@ public:
     int fd() const { return fd_; }
     const std::string& error() const { return err_; }
 
-    // 16k PCM16 mono 샘플을 write_fully 로 송신. 실패(소켓 끊김) 시 false.
+    // 16k PCM16 mono 샘플을 AUDIO 프레임으로 송신. 실패(소켓 끊김) 시 false.
     bool send_pcm16(const int16_t* samples, size_t n);
 
-    // 결과 프레임 1개 수신(블로킹). 성공 시 true, 종료/에러 시 false.
-    bool recv_result(std::string& payload);
+    // 프레임 1개 수신(블로킹). 성공 시 true(type/payload), 종료/에러 시 false.
+    bool recv_frame(MsgType& type, std::string& payload);
 
     void close();
 

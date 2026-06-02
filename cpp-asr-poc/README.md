@@ -174,13 +174,36 @@ third_party/whisper.cpp/models/download-ggml.sh small
   실행 시 whisper 런타임을 호출함(확인). 모델 부재 시 graceful 에러.
 - **end-to-end 미검증**: ggml 모델 호스트가 네트워크 정책에 차단되어 실제 전사는 모델 확보 후.
 
+## 통신 프로토콜 (TLV)
+
+전송은 **UDS `SOCK_STREAM`**, 응용은 **양방향 통합 TLV 프레임**.
+
+```
+프레임:  [u32 length(LE)] [u8 type] [payload(length-1 bytes)]
+```
+
+| type | 이름 | 방향 | payload |
+|---|---|---|---|
+| 0x01 | HELLO | C→S | JSON 핸드셰이크/포맷 협상 `{"v":1,"codec":"pcm16","rate":16000,"ch":1}` |
+| 0x02 | AUDIO | C→S | **raw PCM16LE**(16kHz mono) |
+| 0x03 | PING | C→S | `{"ts":<ms>}` (워치독) |
+| 0x04 | PONG | S→C | PING 에코 (생존 응답) |
+| 0x10 | RESULT | S→C | JSON `{"kind":"consent"\|"transcript"\|"status", ...}` |
+| 0x1f | BYE | 양방향 | `{"reason":"..."}` 정상 종료 |
+
+설계 원칙:
+- **고빈도 오디오는 raw 바이너리**(base64 금지 → 33% 낭비 회피), **저빈도 제어/결과는 JSON**(가독성/디버깅).
+- 타입 1바이트로 자기기술 + 확장 가능. 20ms(640B) 청크당 헤더 5바이트 = **<1%** 오버헤드.
+- 같은 fd 에 두 스레드가 쓰는 측(서버)은 write 를 뮤텍스로 직렬화.
+- **HELLO**로 코덱/레이트 협상(암묵 규약 명시화), **PING/PONG**으로 워치독/헬스체크.
+
 ## 운영화 골격 + 하이브리드 통합
 
 설계 문서의 프로세스 분리/IPC/이중 경로를 코드로 묶었다. (모델 비의존 부분은 모두 단위 테스트됨)
 
 구성 요소:
 - `ring_buffer` — 고정 크기 오디오 링버퍼 + **백프레셔(drop-oldest)** + 메트릭(pushed/dropped/max_depth)
-- `frame_io` — **read_fully**(partial read 재조립) + **길이 prefix 프레이밍**(`[u32 len][payload]`)
+- `frame_io` — **read_fully**(partial read 재조립) + **통합 TLV 프레임**(`[u32 len][u8 type][payload]`)
 - `uds_server` — Unix Domain Socket bind/listen/accept + 스테일 소켓 정리
 - `hybrid` — 오케스트레이터: 모든 청크 → 실시간 동의(Vosk), 닫힌 세그먼트 → 보조 전사(whisper).
   엔진을 `std::function` 으로 주입(페이크로 테스트 가능)
@@ -220,7 +243,7 @@ third_party/whisper.cpp/models/download-ggml.sh small
 설계 결정:
 - **클라이언트가 디코드+리샘플 담당** → 서버는 항상 16kHz PCM16 단일 포맷만 처리(균일).
   (원 설계 문서의 "Main Process: PCMU 디코딩 후 16kHz PCM 추출" 의도와 일치)
-- 와이어 포맷: 오디오 IN = **raw PCM16LE 연속 스트림**(프레이밍 없음), 결과 OUT = **길이 prefix 프레임**.
+- 와이어 포맷: **통합 TLV 프레임**(아래 "통신 프로토콜" 참고). 오디오는 raw PCM16LE, 제어/결과는 JSON.
 - **스트리밍(상태 유지) 리샘플러**: FIR 딜레이라인을 청크 간 유지 → 20ms 패킷 연속 입력에도
   경계 아티팩트 없음(블록 처리와 MAE≈0 확인).
 - **백프레셔**: 전화망 콜백은 절대 블로킹하지 않음(디코드 후 링버퍼에 push, 가득 차면 drop-oldest).
