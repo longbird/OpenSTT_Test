@@ -226,7 +226,10 @@ third_party/whisper.cpp/models/download-ggml.sh small
 - **백프레셔**: 전화망 콜백은 절대 블로킹하지 않음(디코드 후 링버퍼에 push, 가득 차면 drop-oldest).
 - **SIGPIPE 안전**: 프레이밍 송신은 `send(MSG_NOSIGNAL)`; 스레드 종료는 `shutdown(SHUT_RDWR)`로
   블로킹 read 를 깨움.
-- **연결 복원력**: 초기 연결은 지수 백오프 재시도. (스트림 중 재연결/폴백은 운영화 항목 참고)
+- **연결 복원력**: 초기 연결 + **스트림 중 재연결**(지수 백오프). 송신 스레드가 재연결 소유자이고
+  수신 스레드는 generation 카운터로 새 연결을 따라간다(이중 연결/레이스 없음).
+- **graceful degradation 훅**: 상태 변화를 `on_status(connected/reconnecting/disconnected/gave_up)`로
+  통지 → 상위에서 동의 자동감지 비활성·상담원 수동 확인 폴백 등 처리 가능.
 
 구성 요소:
 - `streaming_resampler` — 8k→16k 상태 유지 업샘플(x2, anti-alias FIR)
@@ -253,12 +256,14 @@ third_party/whisper.cpp/models/download-ggml.sh small
 - `asr_feed` end-to-end: 15200 PCMU 바이트 → 서버가 **30400개 16k 샘플**(정확히 2배) 수신,
   결과 프레임 정상 수신, 링버퍼 드롭 0.
 - 단위 테스트 `pcmu_sender`: 리샘플 연속성 + 송신→서버 바이트 경로 + 결과 프레임 수신.
+- 단위 테스트 `pcmu_reconnect`: 서버가 스트림 중 연결을 끊어도 **재연결 후 송신/수신 재개**
+  (reconnects≥1, 재연결 후 오디오 수신 확인, 상태 시퀀스 connected×2+reconnecting).
 
 ## 다음 단계
 
 - 한국어 모델(Vosk/whisper) 확보 후 **end-to-end + FP/FN·지연 측정**
 - 전처리(AGC/NS) on/off A·B 측정
-- 스트림 중 **재연결**(generation 카운터로 송/수신 스레드 안전 교체) + AI 다운 시
-  graceful degradation(상담원 수동 확인 폴백) + 워치독/헬스체크
+- 워치독/헬스체크(주기적 ping/타임아웃) — 재연결/graceful degradation 골격 위에 추가
+- 서버측(asr_pipeline)도 클라이언트 끊김 시 세션 정리/재대기 강건화
 
 > 참고: 본 디렉토리는 저장소의 Node.js(OpenAI Realtime) 앱과 독립적인 별도 스택의 PoC다.

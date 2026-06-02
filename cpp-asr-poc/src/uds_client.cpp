@@ -11,29 +11,34 @@
 
 namespace asr {
 
+int uds_connect(const std::string& path, std::string& err) {
+    if (path.size() >= sizeof(sockaddr_un::sun_path)) {
+        err = "socket path too long: " + path;
+        return -1;
+    }
+    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) { err = std::string("socket(): ") + std::strerror(errno); return -1; }
+
+    sockaddr_un addr {};
+    addr.sun_family = AF_UNIX;
+    std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
+
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        err = std::string("connect(): ") + std::strerror(errno);
+        ::close(fd);
+        return -1;
+    }
+    return fd;
+}
+
 UdsClient::~UdsClient() { close(); }
 
 bool UdsClient::connect(const std::string& path, int retries, int backoff_base_ms) {
-    if (path.size() >= sizeof(sockaddr_un::sun_path)) {
-        err_ = "socket path too long: " + path;
-        return false;
-    }
     path_ = path;
     int delay = backoff_base_ms;
     for (int attempt = 0; attempt <= retries; ++attempt) {
-        int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-        if (fd < 0) { err_ = std::string("socket(): ") + std::strerror(errno); return false; }
-
-        sockaddr_un addr {};
-        addr.sun_family = AF_UNIX;
-        std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
-
-        if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0) {
-            fd_ = fd;
-            return true;
-        }
-        err_ = std::string("connect(): ") + std::strerror(errno);
-        ::close(fd);
+        int fd = uds_connect(path, err_);
+        if (fd >= 0) { fd_ = fd; return true; }
         if (attempt < retries) {
             std::this_thread::sleep_for(std::chrono::milliseconds(delay));
             delay *= 2; // 지수 백오프

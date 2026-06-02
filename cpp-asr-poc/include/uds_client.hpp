@@ -7,6 +7,9 @@
 
 namespace asr {
 
+// UDS 경로에 1회 연결 시도. 성공 시 fd(>=0), 실패 시 -1(err 기록). 재시도 없음.
+int uds_connect(const std::string& path, std::string& err);
+
 class UdsClient {
 public:
     UdsClient() = default;

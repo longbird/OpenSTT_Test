@@ -64,6 +64,10 @@ add_executable(test_sender tests/test_sender.cpp)
 target_link_libraries(test_sender PRIVATE asr_poc)
 add_test(NAME pcmu_sender COMMAND test_sender)
 
+add_executable(test_reconnect tests/test_reconnect.cpp)
+target_link_libraries(test_reconnect PRIVATE asr_poc)
+add_test(NAME pcmu_reconnect COMMAND test_reconnect)
+
 # ---- PoC-B: Vosk 동의 감지 (libvosk 가 있을 때만 빌드) ----
 # 라이브러리 위치: third_party/vosk/{libvosk.so, vosk_api.h}
 set(VOSK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/vosk)
