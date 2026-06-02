@@ -54,3 +54,20 @@ else()
   message(WARNING "libvosk not found in ${VOSK_DIR} -> skipping PoC-B (asr_consent). "
                   "See README: place libvosk.so + vosk_api.h there.")
 endif()
+
+# ---- PoC-C: whisper.cpp 보조 전사 (소스가 있을 때만 빌드) ----
+# git clone https://github.com/ggml-org/whisper.cpp third_party/whisper.cpp
+set(WHISPER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/whisper.cpp)
+if(EXISTS ${WHISPER_DIR}/CMakeLists.txt)
+  message(STATUS "whisper.cpp found -> building PoC-C (asr_transcribe)")
+  set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+  add_subdirectory(${WHISPER_DIR} whisper_build)
+  add_executable(asr_transcribe src/main_transcribe.cpp src/asr_whisper.cpp)
+  target_include_directories(asr_transcribe PRIVATE ${WHISPER_DIR}/include)
+  target_link_libraries(asr_transcribe PRIVATE asr_poc whisper)
+else()
+  message(WARNING "whisper.cpp not found in ${WHISPER_DIR} -> skipping PoC-C (asr_transcribe). "
+                  "See README: clone whisper.cpp there.")
+endif()

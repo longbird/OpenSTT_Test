@@ -130,11 +130,55 @@ cmake -B build -S . && cmake --build build -j
 - **end-to-end 미검증**: 한국어 모델 호스트가 본 환경의 네트워크 정책에 차단되어 실제
   음성→동의 감지 실행은 모델 확보 후 가능.
 
+## PoC-C: whisper.cpp 보조 전사
+
+역할 분리: **실시간 동의 판단은 PoC-B(Vosk)** 가 담당하고, whisper 는 **오프 경로**에서
+통화 전체 전사를 만들어 로그/감사/분쟁 대비에 쓴다(실시간 판단엔 미관여).
+
+구성 요소:
+- `asr_whisper` — whisper.cpp 래퍼: 16k PCM16 → float32 변환 → `whisper_full` → 세그먼트 텍스트
+- `asr_transcribe` — PoC-C CLI: 디코드 → 16k 리샘플 → whisper 전사 → JSON
+
+설계 반영:
+- `no_context=true` 로 세그먼트 간 문맥 이월을 끊어 환각을 억제.
+- `initial_prompt` 는 **기본 비움**(바이어싱은 무음/짧은 발화에서 환각·반복 유발 위험).
+  실험 시에만 `--prompt` 로 주입.
+
+### 의존성 배치 & 빌드
+
+whisper.cpp 소스가 있으면 `asr_transcribe` 타겟이 자동 빌드된다(없으면 경고 후 스킵).
+
+```bash
+git clone https://github.com/ggml-org/whisper.cpp third_party/whisper.cpp   # (커밋 제외)
+cmake -B build -S . && cmake --build build -j
+```
+
+**모델(ggml-*.bin) 확보** — whisper.cpp 의 `models/download-ggml.sh` 또는 huggingface:
+```bash
+# 예) base/small 한국어 실시간 가능 모델
+third_party/whisper.cpp/models/download-ggml.sh small
+```
+> ⚠️ whisper ggml 모델 호스트(`huggingface.co`, `ggml.ggerganov.com`)도 네트워크 정책에
+> 차단될 수 있다(본 환경에서 확인됨). 차단 시 해당 호스트 allowlist 추가 또는 수동 배치 필요.
+
+### 실행
+
+```bash
+./build/asr_transcribe --model third_party/whisper.cpp/models/ggml-small.bin \
+                       --input call.pcmu --format pcmu --rate 8000 --lang ko
+```
+
+### 현재 검증 상태
+
+- 빌드/링크: whisper+ggml 정적 빌드 후 `asr_transcribe` 가 libwhisper 와 링크되고
+  실행 시 whisper 런타임을 호출함(확인). 모델 부재 시 graceful 에러.
+- **end-to-end 미검증**: ggml 모델 호스트가 네트워크 정책에 차단되어 실제 전사는 모델 확보 후.
+
 ## 다음 단계
 
-- 한국어 모델 확보 후 **end-to-end 동의 감지 + FP/FN·지연 측정**
+- 한국어 모델(Vosk/whisper) 확보 후 **end-to-end + FP/FN·지연 측정**
 - 전처리(AGC/NS) on/off A·B 측정
-- **PoC-C**: whisper.cpp 보조 전사 경로 병행
 - **운영화**: UDS 프레이밍(길이 prefix) + 백프레셔 링버퍼 + 워치독
+- Vosk(실시간 동의) + whisper(전체 전사) **하이브리드 통합**
 
 > 참고: 본 디렉토리는 저장소의 Node.js(OpenAI Realtime) 앱과 독립적인 별도 스택의 PoC다.
