@@ -10,15 +10,21 @@ endif()
 
 add_compile_options(-Wall -Wextra)
 
-# 코어 라이브러리 (외부 의존성 없음): PoC-A 전단 + PoC-B 보조 로직
+# 코어 라이브러리 (외부 의존성 없음): PoC-A 전단 + PoC-B 보조 로직 + 운영화 골격
 add_library(asr_poc STATIC
   src/g711.cpp
   src/wav_io.cpp
   src/vad.cpp
   src/resample.cpp
   src/consent_match.cpp
+  src/ring_buffer.cpp
+  src/frame_io.cpp
+  src/uds_server.cpp
+  src/hybrid.cpp
 )
 target_include_directories(asr_poc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+find_package(Threads REQUIRED)
+target_link_libraries(asr_poc PUBLIC Threads::Threads)
 
 # 세그멘터 CLI (PoC-A)
 add_executable(asr_segmenter src/main.cpp)
@@ -37,6 +43,14 @@ add_test(NAME vad_segmenter COMMAND test_vad)
 add_executable(test_resample tests/test_resample.cpp)
 target_link_libraries(test_resample PRIVATE asr_poc)
 add_test(NAME resample_and_match COMMAND test_resample)
+
+add_executable(test_ipc tests/test_ipc.cpp)
+target_link_libraries(test_ipc PRIVATE asr_poc)
+add_test(NAME ipc_framing_uds COMMAND test_ipc)
+
+add_executable(test_hybrid tests/test_hybrid.cpp)
+target_link_libraries(test_hybrid PRIVATE asr_poc)
+add_test(NAME hybrid_orchestration COMMAND test_hybrid)
 
 # ---- PoC-B: Vosk 동의 감지 (libvosk 가 있을 때만 빌드) ----
 # 라이브러리 위치: third_party/vosk/{libvosk.so, vosk_api.h}
@@ -70,4 +84,15 @@ if(EXISTS ${WHISPER_DIR}/CMakeLists.txt)
 else()
   message(WARNING "whisper.cpp not found in ${WHISPER_DIR} -> skipping PoC-C (asr_transcribe). "
                   "See README: clone whisper.cpp there.")
+endif()
+
+# ---- 운영화 결선: asr_pipeline (Vosk + whisper 둘 다 있을 때만) ----
+if(TARGET asr_consent AND TARGET asr_transcribe)
+  message(STATUS "Vosk + whisper available -> building asr_pipeline (UDS hybrid)")
+  add_executable(asr_pipeline src/main_pipeline.cpp src/asr_vosk.cpp src/asr_whisper.cpp)
+  target_include_directories(asr_pipeline PRIVATE ${VOSK_DIR} ${WHISPER_DIR}/include)
+  target_link_libraries(asr_pipeline PRIVATE asr_poc ${VOSK_LIB} whisper)
+  set_target_properties(asr_pipeline PROPERTIES
+    BUILD_RPATH ${VOSK_DIR}
+    INSTALL_RPATH ${VOSK_DIR})
 endif()

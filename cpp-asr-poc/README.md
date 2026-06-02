@@ -174,11 +174,49 @@ third_party/whisper.cpp/models/download-ggml.sh small
   실행 시 whisper 런타임을 호출함(확인). 모델 부재 시 graceful 에러.
 - **end-to-end 미검증**: ggml 모델 호스트가 네트워크 정책에 차단되어 실제 전사는 모델 확보 후.
 
+## 운영화 골격 + 하이브리드 통합
+
+설계 문서의 프로세스 분리/IPC/이중 경로를 코드로 묶었다. (모델 비의존 부분은 모두 단위 테스트됨)
+
+구성 요소:
+- `ring_buffer` — 고정 크기 오디오 링버퍼 + **백프레셔(drop-oldest)** + 메트릭(pushed/dropped/max_depth)
+- `frame_io` — **read_fully**(partial read 재조립) + **길이 prefix 프레이밍**(`[u32 len][payload]`)
+- `uds_server` — Unix Domain Socket bind/listen/accept + 스테일 소켓 정리
+- `hybrid` — 오케스트레이터: 모든 청크 → 실시간 동의(Vosk), 닫힌 세그먼트 → 보조 전사(whisper).
+  엔진을 `std::function` 으로 주입(페이크로 테스트 가능)
+- `asr_pipeline` — 실엔진 결선 CLI: UDS 수신 스레드 → 링버퍼 → 처리 스레드(HybridPipeline) →
+  동의/전사/상태를 프레임으로 회신 (Vosk + whisper 둘 다 있을 때만 빌드)
+
+데이터 흐름:
+```
+[메인 백엔드] ──(16k PCM16 raw)──> UDS ──> 수신스레드 → 링버퍼(백프레셔)
+                                                │
+                                  처리스레드  HybridPipeline
+                                    ├─ Vosk    : 실시간 동의 → {"type":"consent",...}
+                                    └─ whisper : 세그먼트 전사 → {"type":"transcript",...}
+                          ← 결과는 [u32 len][JSON] 프레임으로 동일 소켓 회신
+```
+
+실행(모델 필요):
+```bash
+./build/asr_pipeline --socket /tmp/asr.sock \
+                     --model-vosk    third_party/models/vosk-model-small-ko-0.22 \
+                     --model-whisper third_party/whisper.cpp/models/ggml-small.bin --lang ko
+# 메인 백엔드(클라이언트)는 /tmp/asr.sock 에 16kHz PCM16 raw 스트림을 흘리고,
+# 같은 소켓에서 길이 prefix JSON 프레임(consent/transcript/status)을 읽는다.
+```
+> 입력은 16kHz PCM16 mono 전제. 8kHz 통화는 업스트림 또는 PoC-B/-C 경로의 리샘플로 변환.
+
+### 검증 상태 (운영화)
+
+- 단위 테스트 통과: 링버퍼 drop-oldest·메트릭, 프레이밍 왕복(부분 read 재조립),
+  **실제 UDS bind/connect/오디오 송신/프레임 회신**, 하이브리드 라우팅(동의 전량 공급 + 세그먼트 전사).
+- `asr_pipeline` 은 libvosk + libwhisper 와 정상 링크(컴파일·링크 검증). 실행 e2e 는 모델 확보 후.
+
 ## 다음 단계
 
 - 한국어 모델(Vosk/whisper) 확보 후 **end-to-end + FP/FN·지연 측정**
 - 전처리(AGC/NS) on/off A·B 측정
-- **운영화**: UDS 프레이밍(길이 prefix) + 백프레셔 링버퍼 + 워치독
-- Vosk(실시간 동의) + whisper(전체 전사) **하이브리드 통합**
+- 워치독/헬스체크, AI 다운 시 graceful degradation(상담원 수동 확인 폴백)
 
 > 참고: 본 디렉토리는 저장소의 Node.js(OpenAI Realtime) 앱과 독립적인 별도 스택의 PoC다.
