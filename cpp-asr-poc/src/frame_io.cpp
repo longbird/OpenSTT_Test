@@ -1,6 +1,7 @@
 #include "frame_io.hpp"
 #include <cerrno>
 #include <cstring>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -77,6 +78,20 @@ bool read_frame(int fd, MsgType& type, std::string& payload, uint32_t max_len) {
     payload.resize(plen);
     if (plen == 0) return true;
     return read_fully(fd, &payload[0], plen) == static_cast<ssize_t>(plen);
+}
+
+int wait_readable(int fd, int timeout_ms) {
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    int r;
+    do { r = ::poll(&pfd, 1, timeout_ms); } while (r < 0 && errno == EINTR);
+    if (r < 0) return -1;
+    if (r == 0) return 0;
+    // POLLHUP/POLLERR 도 read 가 즉시 반환(EOF/에러)하므로 readable 로 취급
+    if (pfd.revents & (POLLIN | POLLHUP | POLLERR)) return 1;
+    return 0;
 }
 
 } // namespace asr

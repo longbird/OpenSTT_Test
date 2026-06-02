@@ -38,4 +38,8 @@ bool write_frame(int fd, MsgType type, const std::string& payload);
 bool read_frame(int fd, MsgType& type, std::string& payload,
                 uint32_t max_len = 16u * 1024u * 1024u);
 
+// fd 가 읽기 가능해질 때까지 최대 timeout_ms 대기(워치독/유휴 타임아웃용).
+// 반환: 1=읽기 가능(또는 peer 종료), 0=타임아웃, -1=에러.
+int wait_readable(int fd, int timeout_ms);
+
 } // namespace asr

@@ -208,7 +208,9 @@ third_party/whisper.cpp/models/download-ggml.sh small
 - `hybrid` — 오케스트레이터: 모든 청크 → 실시간 동의(Vosk), 닫힌 세그먼트 → 보조 전사(whisper).
   엔진을 `std::function` 으로 주입(페이크로 테스트 가능)
 - `asr_pipeline` — 실엔진 결선 CLI: UDS 수신 스레드 → 링버퍼 → 처리 스레드(HybridPipeline) →
-  동의/전사/상태를 프레임으로 회신 (Vosk + whisper 둘 다 있을 때만 빌드)
+  동의/전사/상태를 프레임으로 회신 (Vosk + whisper 둘 다 있을 때만 빌드).
+  **유휴 타임아웃**(`--rx-timeout-ms`, 기본 6s): `poll` 로 수신을 감시하다 무응답 클라이언트면
+  세션을 정리(EOF 대기로 멈추지 않음).
 
 데이터 흐름:
 ```
@@ -281,6 +283,8 @@ third_party/whisper.cpp/models/download-ggml.sh small
 - 단위 테스트 `pcmu_sender`: 리샘플 연속성 + 송신→서버 바이트 경로 + 결과 프레임 수신.
 - 단위 테스트 `pcmu_reconnect`: 서버가 스트림 중 연결을 끊어도 **재연결 후 송신/수신 재개**
   (reconnects≥1, 재연결 후 오디오 수신 확인, 상태 시퀀스 connected×2+reconnecting).
+- 단위 테스트 `server_idle_timeout`: 클라이언트가 연결 유지한 채 무응답이면 서버가
+  **EOF가 아니라 타임아웃으로 세션 정리**(~600ms 윈도우 확인).
 
 ## 다음 단계
 

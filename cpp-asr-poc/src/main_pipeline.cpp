@@ -62,6 +62,8 @@ std::string transcript_json(const asr::Segment& seg,
 int main(int argc, char** argv) {
     std::string sock = "/tmp/asr.sock", vosk_model, whisper_model, lang = "ko";
     int ring_ms = 4000;
+    int rx_timeout_ms = 6000; // 이 시간 내 프레임 없으면 무응답 클라이언트로 간주(0=비활성)
+    int poll_ms = 500;        // 유휴 확인 주기
 
     for (int i = 1; i < argc; ++i) {
         std::string k = argv[i];
@@ -71,9 +73,11 @@ int main(int argc, char** argv) {
         else if (k == "--model-whisper") whisper_model = next();
         else if (k == "--lang") lang = next();
         else if (k == "--ring-ms") ring_ms = std::stoi(next());
+        else if (k == "--rx-timeout-ms") rx_timeout_ms = std::stoi(next());
         else if (k == "-h" || k == "--help") {
             std::fprintf(stderr, "usage: asr_pipeline --socket /tmp/asr.sock "
-                                 "--model-vosk <dir> --model-whisper <ggml.bin> [--lang ko]\n");
+                                 "--model-vosk <dir> --model-whisper <ggml.bin> [--lang ko] "
+                                 "[--rx-timeout-ms 6000]\n");
             return 0;
         }
     }
@@ -111,12 +115,32 @@ int main(int argc, char** argv) {
     asr::AudioRingBuffer ring(static_cast<size_t>(rate) * ring_ms / 1000);
     std::atomic<bool> done{false};
 
-    // 수신 스레드: 프레임 디코드 → AUDIO는 링버퍼, PING은 PONG 회신
+    // 수신 스레드: 프레임 디코드 → AUDIO는 링버퍼, PING은 PONG 회신.
+    // poll 로 유휴를 감시해, rx_timeout 내 프레임이 없으면 무응답으로 보고 세션 정리.
+    std::atomic<bool> timed_out{false};
     std::thread receiver([&] {
         asr::MsgType type;
         std::string payload;
+        long long last_rx = (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        auto now_ms = [] {
+            return (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+        };
         while (true) {
+            int pr = asr::wait_readable(cfd, poll_ms);
+            if (pr < 0) break;
+            if (pr == 0) { // 타임아웃: 유휴 점검
+                if (rx_timeout_ms > 0 && now_ms() - last_rx > rx_timeout_ms) {
+                    timed_out = true;
+                    std::fprintf(stderr, "[server] client idle > %dms, closing session\n",
+                                 rx_timeout_ms);
+                    break;
+                }
+                continue;
+            }
             if (!asr::read_frame(cfd, type, payload)) break;
+            last_rx = now_ms();
             switch (type) {
                 case asr::MsgType::Audio: {
                     size_t n = payload.size() / sizeof(int16_t);
