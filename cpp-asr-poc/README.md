@@ -59,11 +59,82 @@ ctest --test-dir build --output-on-failure
 - 단위 테스트 통과: G.711 디코드 sanity, 세그먼트 카운트(2), 순수 무음(0)
 - 16kHz / 8kHz WAV, 8kHz PCMU raw 모두에서 발화 2개를 동일하게 추출
 
-## 다음 단계 (미구현)
+## PoC-B: Vosk 그래머 제약 동의 감지
 
-- **PoC-B**: 발화 세그먼트 → KWS/grammar 제약 디코딩으로 "네/오케이" 동의 감지
-  (sherpa-onnx KWS 또는 Vosk 후보) — 모델 다운로드 필요(네트워크 정책 의존)
-- **PoC-C**: whisper.cpp를 보조 전사 경로로 병행, 8k→16k anti-alias 리샘플 추가
+엔진 선정 결과 **Vosk(Kaldi 기반)** 를 1차 채택했다. 근거:
+- 한국어 모델이 공식 제공되어 즉시 착수 가능(sherpa-onnx KWS는 한국어 사전학습 모델이 없어 직접 학습 필요).
+- **그래머 제약 디코딩**(`vosk_recognizer_new_grm`)으로 탐색공간을 동의 구문으로 한정
+  → **오탐(FP)↓, 지연↓**. 동의 오탐이 요금 분쟁과 직결되는 이 시나리오에 최적.
+
+구성 요소:
+- `resample` — 8kHz(통화) → 16kHz **anti-alias 업샘플**(windowed-sinc FIR, 폴리페이즈)
+- `consent_match` — 동의 구문 → 그래머 JSON 생성 + 텍스트 매칭(libvosk 비의존, 단위 테스트됨)
+- `asr_vosk` — libvosk 래퍼: 그래머 인식기 + 결과 JSON 파싱 + 동의 이벤트 산출
+- `asr_consent` — PoC-B CLI: 디코드 → 16k 리샘플 → Vosk 그래머 인식 → 동의 JSON
+
+### 의존성 배치 (third_party)
+
+대용량 바이너리/모델은 저장소에 커밋하지 않는다(.gitignore). 직접 작성한 `vosk_api.h`만 추적.
+
+```
+third_party/vosk/
+├── vosk_api.h     # (커밋됨) 사용 API 선언, vosk 0.3.45 기준
+└── libvosk.so     # (커밋 제외) 아래 방법으로 확보
+```
+
+**libvosk.so 확보** — PyPI 휠에서 추출(헤더는 위에 이미 있음):
+```bash
+cd third_party && pip download vosk --no-deps -d /tmp/voskwhl
+unzip -o /tmp/voskwhl/vosk-*.whl -d /tmp/voskx
+cp /tmp/voskx/vosk/libvosk.so vosk/
+```
+
+**한국어 모델 확보** — `vosk-model-small-ko-0.22` (alphacephei.com):
+```bash
+# 예: 모델을 third_party/models/ 아래에 배치
+mkdir -p third_party/models && cd third_party/models
+curl -LO https://alphacephei.com/vosk/models/vosk-model-small-ko-0.22.zip
+unzip vosk-model-small-ko-0.22.zip
+```
+
+> ⚠️ **네트워크 정책 주의**: 일부 실행 환경은 `alphacephei.com` / `huggingface.co` 를
+> 차단(`host_not_allowed`)한다. 이 경우 모델을 받을 수 없으므로, 해당 호스트를 환경
+> allowlist에 추가하거나 모델 디렉토리를 수동으로 배치해야 한다. (libvosk 는 PyPI에서
+> 받으므로 보통 영향 없음.)
+
+### 빌드 & 실행 (PoC-B)
+
+`libvosk.so` 가 있으면 `asr_consent` 타겟이 자동 빌드된다(없으면 경고 후 스킵).
+
+```bash
+cmake -B build -S . && cmake --build build -j
+# 통화 raw(8kHz PCMU) → 동의 감지
+./build/asr_consent --model third_party/models/vosk-model-small-ko-0.22 \
+                    --input call.pcmu --format pcmu --rate 8000
+# WAV
+./build/asr_consent --model <ko-model-dir> --input call.wav --min-conf 0.6
+```
+
+출력(예시):
+```
+{"event":0,"consent":true,"text":"네","confidence":0.92,"start_ms":900,"end_ms":1100}
+{"consent_detected":true,"events":1}
+```
+
+동의 구문 목록과 임계값은 `ConsentConfig`(`include/asr_vosk.hpp`)에서 조정한다.
+
+### 현재 검증 상태
+
+- 빌드/링크: `asr_consent` 가 libvosk 와 정상 링크되고 실행 시 Vosk 런타임을 호출함(확인).
+- 단위 테스트: 리샘플러(8k→16k 길이 2배·주파수 보존·진폭 유지) + 동의 매칭/그래머 통과.
+- **end-to-end 미검증**: 한국어 모델 호스트가 본 환경의 네트워크 정책에 차단되어 실제
+  음성→동의 감지 실행은 모델 확보 후 가능.
+
+## 다음 단계
+
+- 한국어 모델 확보 후 **end-to-end 동의 감지 + FP/FN·지연 측정**
+- 전처리(AGC/NS) on/off A·B 측정
+- **PoC-C**: whisper.cpp 보조 전사 경로 병행
 - **운영화**: UDS 프레이밍(길이 prefix) + 백프레셔 링버퍼 + 워치독
 
 > 참고: 본 디렉토리는 저장소의 Node.js(OpenAI Realtime) 앱과 독립적인 별도 스택의 PoC다.

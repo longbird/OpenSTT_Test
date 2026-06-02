@@ -5,3 +5,9 @@ build/
 *.pcmu
 *.pcma
 *.raw
+
+# third_party: 대용량 바이너리/모델은 커밋 제외, 직접 작성한 헤더만 추적
+third_party/*
+!third_party/vosk/
+third_party/vosk/*
+!third_party/vosk/vosk_api.h
