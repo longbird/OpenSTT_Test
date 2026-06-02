@@ -211,6 +211,9 @@ third_party/whisper.cpp/models/download-ggml.sh small
   동의/전사/상태를 프레임으로 회신 (Vosk + whisper 둘 다 있을 때만 빌드).
   **유휴 타임아웃**(`--rx-timeout-ms`, 기본 6s): `poll` 로 수신을 감시하다 무응답 클라이언트면
   세션을 정리(EOF 대기로 멈추지 않음).
+  **다중 통화**: 모델은 1회 로드 후 재사용하고, 통화마다 인식기 상태(`det.reset()`)·링버퍼·
+  파이프라인만 리셋한 뒤 `accept` 로 돌아가 다음 클라이언트를 받는다. SIGINT/SIGTERM 시
+  listen 소켓을 shutdown 해 `accept` 를 깨우고 깔끔히 종료.
 
 데이터 흐름:
 ```
@@ -285,6 +288,8 @@ third_party/whisper.cpp/models/download-ggml.sh small
   (reconnects≥1, 재연결 후 오디오 수신 확인, 상태 시퀀스 connected×2+reconnecting).
 - 단위 테스트 `server_idle_timeout`: 클라이언트가 연결 유지한 채 무응답이면 서버가
   **EOF가 아니라 타임아웃으로 세션 정리**(~600ms 윈도우 확인).
+- 단위 테스트 `multicall_accept_loop`: 하나의 listen 소켓에서 **두 통화를 순차 처리**하고
+  통화별 리셋이 일어나며, listen shutdown 으로 accept 가 깨어나 종료.
 
 ## 다음 단계
 

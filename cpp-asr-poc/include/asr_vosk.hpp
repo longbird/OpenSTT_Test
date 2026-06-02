@@ -46,6 +46,9 @@ public:
     // 스트림 종료 시 마지막 부분을 마감.
     void finish();
 
+    // 다음 통화를 위해 인식기를 재생성하고 이벤트를 비운다(모델은 재사용).
+    void reset();
+
     const std::vector<ConsentEvent>& events() const { return events_; }
 
 private:

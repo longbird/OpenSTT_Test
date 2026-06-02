@@ -72,6 +72,10 @@ add_executable(test_server_timeout tests/test_server_timeout.cpp)
 target_link_libraries(test_server_timeout PRIVATE asr_poc)
 add_test(NAME server_idle_timeout COMMAND test_server_timeout)
 
+add_executable(test_multicall tests/test_multicall.cpp)
+target_link_libraries(test_multicall PRIVATE asr_poc)
+add_test(NAME multicall_accept_loop COMMAND test_multicall)
+
 # ---- PoC-B: Vosk 동의 감지 (libvosk 가 있을 때만 빌드) ----
 # 라이브러리 위치: third_party/vosk/{libvosk.so, vosk_api.h}
 set(VOSK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/vosk)

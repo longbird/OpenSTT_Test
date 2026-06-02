@@ -100,6 +100,18 @@ void VoskConsentDetector::finish() {
     handle_result(vosk_recognizer_final_result(static_cast<VoskRecognizer*>(rec_)), true);
 }
 
+void VoskConsentDetector::reset() {
+    // 모델(model_)은 유지하고 인식기만 재생성 → 통화 간 상태 격리, 모델 재로딩 회피.
+    if (rec_) { vosk_recognizer_free(static_cast<VoskRecognizer*>(rec_)); rec_ = nullptr; }
+    if (model_) {
+        rec_ = vosk_recognizer_new_grm(static_cast<VoskModel*>(model_),
+                                       cfg_.sample_rate, grammar_json_.c_str());
+        if (rec_) vosk_recognizer_set_words(static_cast<VoskRecognizer*>(rec_), 1);
+    }
+    events_.clear();
+    consumed_ms_ = 0.0;
+}
+
 void VoskConsentDetector::handle_result(const char* json, bool /*is_final*/) {
     if (!json) return;
     std::string j(json);
