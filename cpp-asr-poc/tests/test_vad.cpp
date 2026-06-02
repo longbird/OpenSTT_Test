@@ -33,6 +33,17 @@ int main() {
         check(std::abs(z) < 64, "ulaw 0xFF decodes near zero");
         int16_t big = asr::ulaw_to_pcm16(0x00);
         check(std::abs(big) > 30000, "ulaw 0x00 decodes to large magnitude");
+
+        // 인코드→디코드 라운드트립: μ-law 양자화 오차 내로 복원
+        int maxerr = 0;
+        for (int v = -32000; v <= 32000; v += 137) {
+            int16_t back = asr::ulaw_to_pcm16(asr::pcm16_to_ulaw(static_cast<int16_t>(v)));
+            int rel = std::abs(back - v) * 100 / (std::abs(v) + 256);
+            if (rel > maxerr) maxerr = rel;
+        }
+        char rb[96];
+        std::snprintf(rb, sizeof(rb), "ulaw encode/decode roundtrip within ~quant (maxrel=%d%%)", maxerr);
+        check(maxerr < 15, rb);
     }
 
     // 2) 세그먼트 카운트: 무음/톤/무음/톤/무음 → 2 세그먼트

@@ -1,7 +1,37 @@
 # cpp-asr-poc — 로컬 ASR 파이프라인 PoC
 
 설계 문서 [`docs/local-asr-cpp-design-review.md`](../docs/local-asr-cpp-design-review.md)의
-단계적 도입 로드맵을 코드로 검증하기 위한 PoC. **외부 의존성 없이** 빌드된다.
+단계적 도입 로드맵을 코드로 검증하기 위한 PoC. 코어/IPC 는 **외부 의존성 없이** 빌드되고,
+동의 감지(Vosk)·전사(whisper) 엔진은 모델이 있을 때만 빌드/실행된다.
+
+## 빠른 시작 — 로컬 테스트 (Ubuntu / WSL2)
+
+> ⚠️ 이 PoC 는 **Linux 전용**(UDS·POSIX 소켓·libvosk.so). Windows 라면 **WSL2(Ubuntu)** 에서
+> 실행한다. Windows 폴더 `D:\...\UpPriceCall` 는 WSL2 에서 `/mnt/d/.../UpPriceCall` 로 접근.
+
+```bash
+# 0) (Windows) WSL2 Ubuntu 진입 후, 원하는 폴더에서:
+sudo apt-get update && sudo apt-get install -y build-essential cmake git python3 unzip curl
+
+# 1) 클론 (또는 기존 폴더에서 이 브랜치 체크아웃)
+git clone -b claude/lucid-ritchie-Xnkr0 <repo-url> UpPriceCall
+cd UpPriceCall/cpp-asr-poc
+
+# 2) 의존성/모델 다운로드 (libvosk + whisper.cpp + 한국어/whisper 모델)
+./scripts/setup.sh                 # WHISPER_SIZE=base 로 가볍게도 가능
+
+# 3) 빌드 + 테스트
+./scripts/build.sh
+
+# 4) end-to-end 데모 (한국어 음성 PCMU 권장)
+ffmpeg -i 녹음.wav -ar 8000 -ac 1 -f mulaw sample.pcmu   # 또는 ./build/wav2pcmu 8k.wav sample.pcmu
+./scripts/run_demo.sh sample.pcmu
+# 입력 생략 시: 합성 톤으로 배관만 점검(전사 결과는 무의미)
+```
+
+`setup.sh` 가 받는 것: `third_party/vosk/libvosk.so`(PyPI 휠),
+`third_party/whisper.cpp`(git), `third_party/models/<vosk-ko>`(alphacephei),
+`ggml-<size>.bin`(whisper). **모두 .gitignore — 로컬에서만 받음.** 소스/헤더/테스트는 리포에 포함.
 
 ## 현재 단계: PoC-A (오디오 전단 검증)
 

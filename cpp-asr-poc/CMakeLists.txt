@@ -42,6 +42,10 @@ target_link_libraries(gen_test_audio PRIVATE asr_poc)
 add_executable(asr_feed src/main_feed.cpp)
 target_link_libraries(asr_feed PRIVATE asr_poc)
 
+# WAV(8k mono) → PCMU 변환 도구
+add_executable(wav2pcmu tools/wav2pcmu.cpp)
+target_link_libraries(wav2pcmu PRIVATE asr_poc)
+
 # 자동 테스트
 enable_testing()
 add_executable(test_vad tests/test_vad.cpp)

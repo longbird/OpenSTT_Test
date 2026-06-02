@@ -2,6 +2,7 @@
 //  1) 스트리밍 리샘플러 연속성(청크 스트림 ≈ 블록 처리, 워밍업 제외)
 //  2) PcmuStreamSender → (페이크 서버) end-to-end 바이트 경로 + 결과 프레임 수신
 #include "frame_io.hpp"
+#include "g711.hpp"
 #include "pcmu_sender.hpp"
 #include "resample.hpp"
 #include "streaming_resampler.hpp"
@@ -23,18 +24,6 @@ void check(bool c, const char* m) {
     if (!c) g_fail++;
 }
 
-// 표준 G.711 μ-law 인코드(테스트 입력 생성용)
-uint8_t ulaw_encode(int s) {
-    const int CLIP = 32635, BIAS = 0x84;
-    int sign = (s < 0) ? 0x80 : 0;
-    if (s < 0) s = -s;
-    if (s > CLIP) s = CLIP;
-    s += BIAS;
-    int exponent = 7, mask = 0x4000;
-    while (exponent > 0 && !(s & mask)) { mask >>= 1; exponent--; }
-    int mantissa = (s >> (exponent + 3)) & 0x0f;
-    return static_cast<uint8_t>(~(sign | (exponent << 4) | mantissa));
-}
 } // namespace
 
 int main() {
@@ -108,7 +97,8 @@ int main() {
         const int N = 4000;
         std::vector<uint8_t> ul(N);
         for (int i = 0; i < N; ++i)
-            ul[i] = ulaw_encode(static_cast<int>(6000 * std::sin(2 * M_PI * 440.0 * i / 8000)));
+            ul[i] = asr::pcm16_to_ulaw(
+                static_cast<int16_t>(6000 * std::sin(2 * M_PI * 440.0 * i / 8000)));
         for (int off = 0; off < N; off += 160)
             sender.feed_pcmu(ul.data() + off, std::min(160, N - off));
 

@@ -11,4 +11,7 @@ int16_t ulaw_to_pcm16(uint8_t u);
 // a-law(PCMA) 1바이트 → int16 선형 PCM
 int16_t alaw_to_pcm16(uint8_t a);
 
+// int16 선형 PCM → μ-law(PCMU) 1바이트 (테스트 입력/변환 도구용)
+uint8_t pcm16_to_ulaw(int16_t pcm);
+
 } // namespace asr
